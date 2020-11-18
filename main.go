@@ -26,6 +26,9 @@ func main() {
 		log.Fatal(err)
 	}
 	selectedTest, err := selectTests(tests)
+	if selectedTest == "" {
+		return
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
