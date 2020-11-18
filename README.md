@@ -40,13 +40,13 @@ input files.
 ```
 
 In this example we select `TestOfferUpdater_UpdateOffer$/validate$`. This will
-be passed to the `-run` flag in `go test`.
+be passed to the `-run` flag in `go test`. The full command:
 
 ```
 go test -v ./... -run TestOfferUpdater_UpdateOffer$/validate$
 ```
 
-The `go test` output. Only the selected subtests are executed.
+Only the selected subtests are executed. The command output:
 
 ```
 === RUN   TestOfferUpdater_UpdateOffer
