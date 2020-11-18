@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,28 +13,45 @@ import (
 	"strings"
 )
 
-type Config struct {
-	Verbose bool
-}
-
-var config Config
-
 // regexps
 var (
 	testFuncRegexp = regexp.MustCompile(`func (Test.+)\(t \*testing.T\) {`)
 	subtestRegexp  = regexp.MustCompile(`t.Run\("(.+)", func\(t \*testing.T\) {`)
 )
 
-func init() {
-	flag.BoolVar(&config.Verbose, "v", false, "Verbose mode")
-}
-
 func main() {
 	flag.Parse()
-	listTests(flag.Args())
+	tests, err := listTests(flag.Args())
+	if err != nil {
+		log.Fatal(err)
+	}
+	selectedTest, err := selectTests(tests)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Fprintln(os.Stderr, selectedTest)
+	cmd := []string{"go", "test", "-v"}
+	cmd = append(cmd, flag.Args()...)
+	cmd = append(cmd, "-run", selectedTest)
+	cmdStr := strings.Join(cmd, " ")
+	err = runShellCommand(cmdStr, nil, os.Stdout)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-func listTests(args []string) error {
+func selectTests(tests []string) (selectedTest string, err error) {
+	r := strings.NewReader(strings.Join(tests, "\r\n"))
+	b := &bytes.Buffer{}
+	err = runShellCommand("fzf", r, b)
+	if err != nil {
+		return "", err
+	}
+	selectedTest = strings.TrimSpace(b.String())
+	return selectedTest, nil
+}
+
+func listTests(args []string) (tests []string, err error) {
 	if len(args) == 1 && args[0] == "./..." {
 		err := filepath.Walk("./",
 			func(filePath string, info os.FileInfo, err error) error {
@@ -48,14 +67,15 @@ func listTests(args []string) error {
 				if !strings.HasSuffix(base, "_test.go") {
 					return nil
 				}
-				err = listTestsInFile(filePath)
+				testsInFile, err := listTestsInFile(filePath)
 				if err != nil {
 					return err
 				}
+				tests = append(tests, testsInFile...)
 				return nil
 			})
 		if err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		// treat each element as a file
@@ -64,49 +84,20 @@ func listTests(args []string) error {
 			if !strings.HasSuffix(base, "_test.go") {
 				continue
 			}
-			err := listTestsInFile(filePath)
+			testsInFile, err := listTestsInFile(filePath)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			tests = append(tests, testsInFile...)
 		}
 	}
-	return nil
+	return tests, nil
 }
 
-type testID struct {
-	testFunc string
-	subtests []string
-}
-
-func (t *testID) String() string {
-	id := t.testFunc
-	for _, v := range t.subtests {
-		id = id + "/" + v
-	}
-	return id
-}
-
-func (t *testID) AddSubtest(name string) {
-	name = strings.ReplaceAll(name, " ", "_")
-	t.subtests = append(t.subtests, name)
-}
-
-func (t *testID) PopSubtest() {
-	if len(t.subtests) == 0 {
-		return
-	}
-	t.subtests = t.subtests[:len(t.subtests)-1]
-}
-
-func (t *testID) Reset() {
-	t.testFunc = ""
-	t.subtests = nil
-}
-
-func listTestsInFile(filePath string) error {
+func listTestsInFile(filePath string) (tests []string, err error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
@@ -135,13 +126,13 @@ func listTestsInFile(filePath string) error {
 		} else {
 			continue
 		}
-		fmt.Println(currentTest)
+		tests = append(tests, currentTest.String())
 	}
 
 	if err := scanner.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return tests, nil
 }
 
 func countIndents(text string) (count int64) {
@@ -153,4 +144,34 @@ func countIndents(text string) (count int64) {
 		}
 	}
 	return 0
+}
+
+type testID struct {
+	testFunc string
+	subtests []string
+}
+
+func (t *testID) String() string {
+	id := t.testFunc + "$"
+	for _, v := range t.subtests {
+		id = id + "/" + v + "$"
+	}
+	return id
+}
+
+func (t *testID) AddSubtest(name string) {
+	name = strings.ReplaceAll(name, " ", "_")
+	t.subtests = append(t.subtests, name)
+}
+
+func (t *testID) PopSubtest() {
+	if len(t.subtests) == 0 {
+		return
+	}
+	t.subtests = t.subtests[:len(t.subtests)-1]
+}
+
+func (t *testID) Reset() {
+	t.testFunc = ""
+	t.subtests = nil
 }
