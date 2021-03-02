@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -19,9 +22,31 @@ var (
 	subtestRegexp  = regexp.MustCompile(`t.Run\("(.+)", func\(t \*testing.T\) {`)
 )
 
+func usage() {
+	fmt.Println("Usage: go-test-runner ./path/to/package/...")
+}
+
+func validateArgs() error {
+	if len(flag.Args()) != 1 {
+		usage()
+		return errors.New("invalid number of arguments")
+	}
+	arg := flag.Args()[0]
+	if !strings.HasSuffix(arg, "/...") {
+		usage()
+		return errors.New("invalid argument format")
+	}
+	return nil
+}
+
 func main() {
 	flag.Parse()
-	tests, err := listTests(flag.Args())
+	if err := validateArgs(); err != nil {
+		os.Exit(1)
+	}
+	arg := flag.Args()[0]
+
+	tests, err := listTests(arg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,12 +57,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Fprintln(os.Stderr, selectedTest)
-	cmd := []string{"go", "test", "-v"}
-	cmd = append(cmd, flag.Args()...)
-	cmd = append(cmd, "-run", selectedTest)
-	cmdStr := strings.Join(cmd, " ")
-	err = runShellCommand(cmdStr, nil, os.Stdout)
+	command := "go"
+	args := []string{"test", "-v", arg, "-run", selectedTest}
+
+	fmt.Fprintf(os.Stderr, "%s %v\n", command, strings.Join(args, " "))
+
+	err = runShellCommand(command, args, nil, os.Stdout)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -46,7 +71,7 @@ func main() {
 func selectTests(tests []string) (selectedTest string, err error) {
 	r := strings.NewReader(strings.Join(tests, "\r\n"))
 	b := &bytes.Buffer{}
-	err = runShellCommand("fzf", r, b)
+	err = runShellCommand("fzf", nil, r, b)
 	if err != nil {
 		return "", err
 	}
@@ -54,45 +79,34 @@ func selectTests(tests []string) (selectedTest string, err error) {
 	return selectedTest, nil
 }
 
-func listTests(args []string) (tests []string, err error) {
-	if len(args) == 1 && args[0] == "./..." {
-		err := filepath.Walk("./",
-			func(filePath string, info os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-				base := path.Base(filePath)
-				if info.IsDir() && base == "testdata" {
-					// `go test` ignores directories named
-					// "testdata", here we respect that.
-					return nil
-				}
-				if !strings.HasSuffix(base, "_test.go") {
-					return nil
-				}
-				testsInFile, err := listTestsInFile(filePath)
-				if err != nil {
-					return err
-				}
-				tests = append(tests, testsInFile...)
-				return nil
-			})
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// treat each element as a file
-		for _, filePath := range args {
+func listTests(arg string) (tests []string, err error) {
+	if !strings.HasSuffix(arg, "/...") {
+		return nil, errors.New("invalid argument format")
+	}
+	dir := strings.TrimSuffix(arg, "...")
+	err = filepath.Walk(dir,
+		func(filePath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
 			base := path.Base(filePath)
+			if info.IsDir() && base == "testdata" {
+				// `go test` ignores directories named
+				// "testdata", here we respect that.
+				return nil
+			}
 			if !strings.HasSuffix(base, "_test.go") {
-				continue
+				return nil
 			}
 			testsInFile, err := listTestsInFile(filePath)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			tests = append(tests, testsInFile...)
-		}
+			return nil
+		})
+	if err != nil {
+		return nil, err
 	}
 	return tests, nil
 }
@@ -177,4 +191,17 @@ func (t *testID) PopSubtest() {
 func (t *testID) Reset() {
 	t.testFunc = ""
 	t.subtests = nil
+}
+
+func runShellCommand(command string, args []string, r io.Reader, w io.Writer) error {
+	var cmd *exec.Cmd
+	if len(args) > 0 {
+		cmd = exec.Command(command, args...)
+	} else {
+		cmd = exec.Command(command)
+	}
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = w
+	cmd.Stdin = r
+	return cmd.Run()
 }

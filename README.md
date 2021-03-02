@@ -12,15 +12,16 @@ go get github.com/benjaminheng/go-test-runner
 
 ## Demo
 
-Invoke `go-test-runner` with a package list (`./...`) or a glob pattern
-(`./mypackage/*.go`).
+Invoke `go-test-runner` with a package list. A package list uses the three dot
+syntax, for instance `./path/to/my/package/...`.
 
 ```
 $ go-test-runner ./...
+$ go-test-runner ./path/to/my/package/...
 ```
 
 A fzf process will be started showing the tests and subtests parsed from the
-input files.
+input package.
 
 ```
   TestOfferUpdater_UpdateOffersByID$/offers_are_updated$
